@@ -20,7 +20,7 @@ pinned: false
 
 **RidgeAttenFusionNet** — A dual-branch deep learning ensemble for non-invasive ABO/Rh blood group estimation from fingerprint dermatoglyphics, with Grad-CAM explainability.
 
-# 🔗 **Live Demo:** [(RidgeVision AI)]([[https://sravaninanubala-ridgevision-ai.hf.space/](https://ridgevision-ai.onrender.com/](https://ridgevision-ai.onrender.com)))
+# 🔗 **Live Demo:** [(RidgeVision AI)](https://ridgevision-ai.onrender.com)
 
 📂 **Repository:** [https://github.com/NanubalaSravani/Ridgevision-ai](https://github.com/NanubalaSravani/Ridgevision-ai)
 
