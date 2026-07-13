@@ -6,7 +6,9 @@ import cv2
 import numpy as np
 
 from backend.core.config import CLASS_LABELS, settings
-from backend.ml.explainability.grad_cam import heuristic_grad_cam_b64
+from backend.ml.explainability.attention_alignment import orientation_attention_alignment
+from backend.ml.explainability.causal_attribution import minutiae_causal_attribution
+from backend.ml.explainability.grad_cam import compute_attention_intensity, heuristic_grad_cam_b64
 from backend.ml.feature_engineering.texture import (
     extract_fusion_texture_vector,
     extract_fusion_texture_vector_multilbp,
@@ -171,7 +173,31 @@ class RidgeVisionPredictor:
             "SpatialAttention": SpatialAttention,
         }
 
-    def predict(self, image_bytes: bytes) -> dict:
+    def _probabilities_for_processed(self, image_bgr: np.ndarray, enhanced_gray: np.ndarray) -> dict[str, float]:
+        """Shared branch logic (ensemble / trained / research mode) given an already
+        preprocessed image. Used both by predict() and by explainability methods that
+        need to re-run inference on perturbed copies of the image (e.g. minutiae
+        causal ablation)."""
+        if self._load_ensemble_models():
+            return self._ensemble_model_probabilities(image_bgr=image_bgr, enhanced_gray=enhanced_gray)
+        if self._load_trained_model():
+            return self._trained_model_probabilities(image_bgr=image_bgr, enhanced_gray=enhanced_gray)
+
+        features = extract_texture_features(enhanced_gray)
+        # research mode scores from features + a hash of pixel bytes; re-derive bytes
+        # from the (possibly perturbed) image so the ablation actually changes the score
+        image_bytes = cv2.imencode(".png", image_bgr)[1].tobytes()
+        return self._research_mode_probabilities(features, image_bytes)
+
+    def probabilities_for_bgr_image(self, image_bgr: np.ndarray) -> dict[str, float]:
+        """Public entry point: full preprocessing + inference for a raw BGR image
+        array (as opposed to `predict`, which takes raw upload bytes and also builds
+        the user-facing response payload). Used by explainability modules that need
+        to re-run inference on perturbed/ablated copies of the fingerprint."""
+        processed = enhance_fingerprint(image_bgr)
+        return self._probabilities_for_processed(image_bgr, processed["enhanced"])
+
+    def predict(self, image_bytes: bytes, explain: bool = False) -> dict:
         try:
             image = decode_image(image_bytes)
             processed = enhance_fingerprint(image)
@@ -179,26 +205,20 @@ class RidgeVisionPredictor:
         except ValueError as exc:
             raise PredictorError(str(exc)) from exc
 
-        if self._load_ensemble_models():
-            probabilities = self._ensemble_model_probabilities(
-                image_bgr=image,
-                enhanced_gray=processed["enhanced"],
-            )
+        probabilities = self._probabilities_for_processed(image, processed["enhanced"])
+
+        if self.is_ensemble_model:
             inference_mode = "trained_ensemble"
-        elif self._load_trained_model():
-            probabilities = self._trained_model_probabilities(
-                image_bgr=image,
-                enhanced_gray=processed["enhanced"],
-            )
+        elif self.model is not None:
             inference_mode = "trained_model"
         else:
-            probabilities = self._research_mode_probabilities(features, image_bytes)
             inference_mode = "research_mode"
 
         predicted_class = max(probabilities, key=probabilities.get)
+        attention_intensity = compute_attention_intensity(processed["enhanced"])
         heatmap = heuristic_grad_cam_b64(processed["original_bgr"], processed["enhanced"])
 
-        return {
+        result = {
             "predicted_class": predicted_class,
             "confidence": round(probabilities[predicted_class], 2),
             "all_probabilities": probabilities,
@@ -212,6 +232,22 @@ class RidgeVisionPredictor:
             else "single_image_cnn",
             "disclaimer": settings.disclaimer,
         }
+
+        if explain:
+            oaas = orientation_attention_alignment(processed["enhanced"], attention_intensity)
+            mca = minutiae_causal_attribution(
+                self,
+                image_bgr=processed["original_bgr"],
+                enhanced_gray=processed["enhanced"],
+                predicted_class=predicted_class,
+                baseline_confidence=probabilities[predicted_class],
+            )
+            result["explainability"] = {
+                "orientation_attention_alignment": oaas,
+                "minutiae_causal_attribution": mca,
+            }
+
+        return result
 
     def _predict_fusion_model(
         self,
