@@ -20,14 +20,19 @@ def compute_attention_intensity(enhanced: np.ndarray) -> np.ndarray:
     return attention
 
 
+def encode_bgr_to_data_url(image_bgr: np.ndarray) -> str:
+    """Shared PNG/base64 encoder so every explainability tier (Tier 1 attention,
+    Tier 2 OAAS, Tier 3 MCA) produces images the same way."""
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    buffer = BytesIO()
+    Image.fromarray(image_rgb).save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 def heuristic_grad_cam_b64(original_bgr: np.ndarray, enhanced: np.ndarray) -> str:
     attention = compute_attention_intensity(enhanced)
     heatmap = cv2.applyColorMap(attention, cv2.COLORMAP_TURBO)
     base = cv2.resize(original_bgr, (enhanced.shape[1], enhanced.shape[0]), interpolation=cv2.INTER_AREA)
     overlay = cv2.addWeighted(base, 0.58, heatmap, 0.42, 0)
-    overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-
-    buffer = BytesIO()
-    Image.fromarray(overlay_rgb).save(buffer, format="PNG")
-    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    return encode_bgr_to_data_url(overlay)

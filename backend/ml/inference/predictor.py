@@ -242,9 +242,21 @@ class RidgeVisionPredictor:
                 predicted_class=predicted_class,
                 baseline_confidence=probabilities[predicted_class],
             )
+
+            # Top-level fields the frontend's tiered explainability panel reads
+            # directly (tier1Img/tier2Img/tier3Img + the minutiae list).
+            result["tier1_attention_b64"] = heatmap
+            result["tier2_oaas_b64"] = oaas.get("visualization_b64")
+            result["tier3_mca_b64"] = mca.get("visualization_b64")
+            result["top_minutiae"] = mca.get("top_minutiae", [])
+
             result["explainability"] = {
-                "orientation_attention_alignment": oaas,
-                "minutiae_causal_attribution": mca,
+                "orientation_attention_alignment": {
+                    key: value for key, value in oaas.items() if key != "visualization_b64"
+                },
+                "minutiae_causal_attribution": {
+                    key: value for key, value in mca.items() if key != "visualization_b64"
+                },
             }
 
         return result

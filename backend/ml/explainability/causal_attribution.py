@@ -1,7 +1,31 @@
 import cv2
 import numpy as np
 
+from backend.ml.explainability.grad_cam import encode_bgr_to_data_url
 from backend.ml.explainability.minutiae import extract_minutiae
+
+
+def _render_mca_visualization(image_bgr: np.ndarray, points: list[dict], radius: int) -> str:
+    """Renders the Tier 3 image: the original fingerprint with each ablated minutia
+    marked (green = ridge ending, red = bifurcation), sized by how much confidence
+    dropped when that structure was inpainted out -- bigger dot = more causal weight.
+    """
+    canvas = image_bgr.copy()
+    if not points:
+        return encode_bgr_to_data_url(canvas)
+
+    max_drop = max(abs(p["confidence_drop"]) for p in points) or 1.0
+    overlay = canvas.copy()
+
+    for p in points:
+        color = (90, 200, 90) if p["type"] == "ending" else (60, 60, 230)  # BGR: green / red
+        weight = min(abs(p["confidence_drop"]) / max_drop, 1.0)
+        dot_radius = max(3, int(round(radius * (0.4 + 0.9 * weight))))
+        cv2.circle(overlay, (p["x_full"], p["y_full"]), dot_radius, color, -1, lineType=cv2.LINE_AA)
+        cv2.circle(overlay, (p["x_full"], p["y_full"]), dot_radius + 1, (255, 255, 255), 1, lineType=cv2.LINE_AA)
+
+    blended = cv2.addWeighted(overlay, 0.75, canvas, 0.25, 0)
+    return encode_bgr_to_data_url(blended)
 
 
 def _inpaint_out(image_bgr: np.ndarray, x: int, y: int, radius: int) -> np.ndarray:
@@ -49,6 +73,7 @@ def minutiae_causal_attribution(
             "ending_attribution_pct": 0.0,
             "bifurcation_attribution_pct": 0.0,
             "top_minutiae": [],
+            "visualization_b64": _render_mca_visualization(image_bgr, [], radius=6),
         }
 
     scale_x = image_bgr.shape[1] / enhanced_gray.shape[1]
@@ -66,7 +91,16 @@ def minutiae_causal_attribution(
         probs = predictor.probabilities_for_bgr_image(perturbed)
         drop = baseline_confidence - probs.get(predicted_class, 0.0)
 
-        results.append({"x": point["x"], "y": point["y"], "type": point["type"], "confidence_drop": round(float(drop), 3)})
+        results.append(
+            {
+                "x": point["x"],
+                "y": point["y"],
+                "x_full": x,
+                "y_full": y,
+                "type": point["type"],
+                "confidence_drop": round(float(drop), 3),
+            }
+        )
 
     endings = [r["confidence_drop"] for r in results if r["type"] == "ending"]
     bifurcations = [r["confidence_drop"] for r in results if r["type"] == "bifurcation"]
@@ -76,7 +110,13 @@ def minutiae_causal_attribution(
     total = ending_sum + bifurcation_sum
     total = total if abs(total) > 1e-9 else 1.0
 
+    visualization_b64 = _render_mca_visualization(image_bgr, results, radius=radius)
+
     top_minutiae = sorted(results, key=lambda r: abs(r["confidence_drop"]), reverse=True)[:10]
+    top_minutiae_public = [
+        {"x": r["x"], "y": r["y"], "type": r["type"], "confidence_drop": r["confidence_drop"]}
+        for r in top_minutiae
+    ]
 
     return {
         "minutiae_count": len(results),
@@ -84,5 +124,6 @@ def minutiae_causal_attribution(
         "bifurcation_count": len(bifurcations),
         "ending_attribution_pct": round(100 * ending_sum / total, 1),
         "bifurcation_attribution_pct": round(100 * bifurcation_sum / total, 1),
-        "top_minutiae": top_minutiae,
+        "top_minutiae": top_minutiae_public,
+        "visualization_b64": visualization_b64,
     }

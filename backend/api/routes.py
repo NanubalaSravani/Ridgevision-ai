@@ -20,7 +20,7 @@ async def predict(file: UploadFile = File(...)) -> dict:
         raise HTTPException(status_code=400, detail="Uploaded image is empty.")
 
     try:
-        return ridgevision_predictor.predict(image_bytes)
+        return ridgevision_predictor.predict(image_bytes, explain=True)
     except PredictorError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
