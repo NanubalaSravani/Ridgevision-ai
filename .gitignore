@@ -13,7 +13,7 @@ scratch_code.py
 convert_to_docx.py
 
 model/
-notebooks/
+# notebooks/
 datasets/*
 !datasets/README.md
 datasets/raw/
