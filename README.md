@@ -407,8 +407,6 @@ The deployed interface at [sravaninanubala-ridgevision-ai.hf.space](https://srav
 
 ![RidgeVision AI — Diagnostic Report](<img width="1208" height="1553" alt="image" src="https://github.com/user-attachments/assets/2b3f9f81-b9cc-4d42-b64c-9bb04aaefe1b" />
 
-)<img width="1920" height="1140" alt="screenshot_results" src="https://github.com/user-attachments/assets/423db027-d19c-45a1-b353-2bf2bff2bc53" />
-
 
 
 ---
