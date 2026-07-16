@@ -38,6 +38,7 @@ pinned: false
 - [System Architecture](#-system-architecture)
 - [Workflow Pipeline](#-workflow-pipeline)
 - [Model Details](#-model-details)
+- [Explainability — Three-Tier System](#-explainability--three-tier-system)
 - [Performance Results](#-performance-results)
 - [Confusion Matrix](#-confusion-matrix)
 - [Tech Stack](#-tech-stack)
@@ -73,7 +74,7 @@ RidgeAttenFusionNet introduces several distinctive contributions that differenti
 | 1 | 🔀 **Dual-Branch Hybrid Fusion** | Uniquely combines deep CNN embeddings (EfficientNetB0) with handcrafted texture descriptors (LBP + GLCM + Ridge Density) in a single ensemble — most prior work uses either deep features or handcrafted features, not both |
 | 2 | 🎯 **CBAM Attention on Dermatoglyphics** | First application of Convolutional Block Attention Module (channel + spatial) specifically tuned for fingerprint ridge pattern analysis, enabling the network to focus on biologically relevant ridge regions |
 | 3 | 🧬 **8-Class ABO/Rh Classification** | Extends beyond binary or 4-class ABO systems to full 8-class ABO/Rh prediction (A+, A−, B+, B−, AB+, AB−, O+, O−) — a significantly harder problem rarely addressed in existing literature |
-| 4 | 🔥 **Grad-CAM Explainability for Blood Group Inference** | Integrates gradient-weighted class activation maps to visually explain *which fingerprint regions* drive each blood group prediction, making the system interpretable for research validation |
+| 4 | 🔥 **Three-Tier Explainability Stack** | Goes beyond a single saliency map: Tier 1 provides an attention/Grad-CAM-style heatmap, Tier 2 (OAAS) statistically tests whether that attention aligns with real dermatoglyphic curvature (cores/deltas), and Tier 3 (MCA) causally ablates individual minutiae to measure their actual effect on the prediction — turning "where does it look" into "does it look at the right anatomy, and does that anatomy actually matter" |
 | 5 | 🧹 **Domain-Specific Preprocessing Pipeline** | Custom CLAHE + Gabor filter bank (8 orientations × 4 frequencies) preprocessing chain designed specifically for ridge enhancement in fingerprint dermatoglyphics, improving feature quality before model inference |
 | 6 | ⚖️ **Two-Model Weighted Ensemble** | Trains two architecturally distinct CNN variants (Model-88 and Model-91 style) and combines their softmax outputs, achieving ~89.5–90% ensemble accuracy — outperforming each individual model |
 | 7 | 🌐 **End-to-End Web Deployment** | Delivers the full pipeline — from raw fingerprint upload to Grad-CAM-annotated prediction — as a live, publicly accessible web application (HemaPulse AI on Hugging Face Spaces), bridging research and usability |
@@ -87,7 +88,7 @@ RidgeAttenFusionNet introduces several distinctive contributions that differenti
 | 🔍 **Non-Invasive Prediction** | Blood group inference from fingerprint images — no blood sample needed |
 | 🧠 **Dual-Branch Ensemble** | Combines deep CNN features with handcrafted texture descriptors |
 | 🎯 **8-Class Classification** | Supports all ABO/Rh blood groups: A+, A−, B+, B−, AB+, AB−, O+, O− |
-| 🔥 **Grad-CAM Explainability** | Visual heatmap overlay showing which regions influence predictions |
+| 🔥 **Three-Tier Explainability** | Tier 1 attention heatmap, Tier 2 Orientation-Attention Alignment Score (OAAS), and Tier 3 Minutiae-Causal Attribution (MCA) — see [dedicated section](#-explainability--three-tier-system) |
 | 📊 **Confidence Matrix** | Class-wise probability distribution for all 8 groups |
 | 🧹 **Preprocessing Pipeline** | CLAHE + Gabor filtering + denoising + ridge enhancement |
 | 🌐 **Web Interface** | Clean HemaPulse AI-style frontend deployed on Hugging Face Spaces |
@@ -186,6 +187,51 @@ flowchart TD
     G --> H["✅ Ready for Model Inference"]
 ```
 
+---
+
+## 🔥 Explainability — Three-Tier System
+
+Most fingerprint classifiers that offer "explainability" stop at a single saliency heatmap. RidgeVision AI goes further with a **three-tier explainability stack**, where each tier answers a progressively harder question about *why* the model predicted a given blood group.
+
+```mermaid
+flowchart TD
+    T1["🔥 Tier 1 — Attention Heatmap<br/>Where does the model look?"]
+    T2["🧭 Tier 2 — OAAS<br/>Does it look at real ridge anatomy?"]
+    T3["🧬 Tier 3 — MCA<br/>Does that anatomy actually matter?"]
+    T1 --> T2 --> T3
+```
+
+### Tier 1 — Attention / Grad-CAM Heatmap
+
+A gradient/edge-based saliency map (Sobel-derived attention intensity, Gaussian-smoothed and colorized) highlights the fingerprint regions most influential to the prediction, rendered as a heatmap overlay on the original image. This is the "classic" explainability view — answering *where does the model look?* — and also serves as the shared attention signal consumed by Tier 2.
+
+### Tier 2 — Orientation-Attention Alignment Score (OAAS)
+
+Rather than stopping at a picture, Tier 2 asks a testable question: **does the model's attention actually correspond to biologically meaningful ridge structure?**
+
+- A block-wise ridge **orientation field** is computed independently of the model (standard gradient least-squares method), along with a **coherence** score per block — low coherence marks ridge **cores, deltas, and other high-curvature "singularities"**.
+- The Tier 1 attention map is statistically correlated against this independently-derived singularity map, producing an **alignment correlation** and a **high-attention/singularity overlap ratio**.
+- The result is visualized as the singularity/curvature map overlaid on the fingerprint, with a white outline marking the regions Tier 1 considered most important — overlap between the two is the visual evidence behind the score.
+- A high alignment score is evidence the network has learned to attend to genuine dermatoglyphic structure rather than incidental texture or sensor artifacts.
+
+### Tier 3 — Minutiae-Causal Attribution (MCA)
+
+Tiers 1 and 2 are still fundamentally *correlational*. Tier 3 asks a **causal** question instead: **what happens to the prediction if a specific ridge ending or bifurcation did not exist?**
+
+- Classical crossing-number **minutiae extraction** locates ridge endings and bifurcations on a skeletonized ridge map.
+- Each detected minutia is **locally inpainted out** of the original image — erasing that exact biological structure while preserving surrounding ridge context (as opposed to blanking out an arbitrary square patch).
+- The model re-runs inference on the perturbed image, and the resulting **confidence drop** is attributed directly to that minutia.
+- Results are aggregated by structure type to yield a per-class causal breakdown (e.g. *"bifurcations account for 61% of this prediction's causal support, ridge endings 39%"*), and visualized as the original fingerprint with each ablated minutia marked — green for ridge endings, red for bifurcations — sized by how much confidence dropped when it was removed.
+- This also doubles as a model sanity check: if ablating minutiae barely moves the prediction, that's a red flag the model may be relying on something other than genuine ridge structure (e.g. sensor artifacts or background).
+
+| Tier | Name | Question Answered | Output |
+|:----:|:-----|:-------------------|:-------|
+| 1 | Attention Heatmap | Where does the model look? | Saliency heatmap overlay |
+| 2 | OAAS | Does attention align with real ridge anatomy? | Alignment correlation + overlap ratio + visualization |
+| 3 | MCA | Does that anatomy causally matter to the prediction? | Per-minutia confidence drop + ending/bifurcation attribution % + visualization |
+
+---
+
 ## 📌 Experimental Note
 
 This system is designed for research purposes to explore potential biometric correlations using deep learning. The results are statistical predictions and should be interpreted as experimental findings rather than deterministic biological conclusions.
@@ -252,7 +298,7 @@ The confusion matrix below shows the RidgeVision Retrained Two-Model Ensemble pe
 | **Static Hosting** | FastAPI StaticFiles | Serves frontend assets |
 | **Deep Learning** | TensorFlow / Keras | Model training and inference |
 | **Computer Vision** | OpenCV, scikit-image | Image preprocessing and feature extraction |
-| **Explainability** | Grad-CAM | Visual explanation of model predictions |
+| **Explainability** | Grad-CAM-style attention, orientation-field analysis, minutiae ablation | Three-tier explanation stack (attention, alignment, causal attribution) |
 | **Training Environment** | Kaggle (GPU P100) | Model training and experimentation |
 | **Deployment** | Hugging Face Spaces | Cloud hosting and live demo |
 
@@ -283,7 +329,11 @@ Ridgevision-ai/
 │   └── ensemble_predict.py         # Ensemble averaging + inference
 │
 ├── explainability/
-│   └── gradcam.py                  # Grad-CAM heatmap generation
+│   ├── grad_cam.py                 # Tier 1 — attention/saliency heatmap
+│   ├── orientation.py              # Ridge orientation field + singularity (curvature) map
+│   ├── attention_alignment.py      # Tier 2 — Orientation-Attention Alignment Score (OAAS)
+│   ├── minutiae.py                 # Classical crossing-number minutiae extraction
+│   └── causal_attribution.py       # Tier 3 — Minutiae-Causal Attribution (MCA)
 │
 ├── frontend/
 │   ├── templates/
@@ -383,12 +433,14 @@ Open your browser at: `http://localhost:8000`
    - CLAHE + Gabor preprocessing
    - LBP / GLCM feature extraction
    - Dual-branch ensemble inference
-   - Grad-CAM heatmap generation
+   - Three-tier explainability pipeline (attention heatmap → OAAS → MCA)
 4. **Results** displayed:
    - Predicted blood group (e.g., **AB−**)
    - Confidence percentage
    - Class likelihood matrix (all 8 probabilities)
-   - Grad-CAM attention overlay
+   - **Tier 1:** attention/Grad-CAM heatmap overlay
+   - **Tier 2:** OAAS alignment correlation, overlap ratio, and singularity visualization
+   - **Tier 3:** MCA per-minutia confidence-drop map and ending/bifurcation attribution breakdown
 
 ---
 
